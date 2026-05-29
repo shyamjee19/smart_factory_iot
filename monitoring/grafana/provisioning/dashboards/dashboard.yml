@@ -1,0 +1,19 @@
+# ==============================================================================
+# Grafana Dashboard Provisioning — Smart Factory IoT Platform
+# ==============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: "Smart Factory Dashboards"
+    orgId: 1
+    folder: "Smart Factory IoT"
+    folderUid: smart-factory
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

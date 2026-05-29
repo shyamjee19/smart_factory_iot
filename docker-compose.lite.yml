@@ -1,0 +1,194 @@
+# ==============================================================================
+# Smart Factory IoT Platform — Lite Docker Compose (Development)
+# ==============================================================================
+# Includes only essential services for local development:
+#   postgres, mqtt, zookeeper, kafka, mqtt-kafka-bridge, backend, frontend
+#
+# Usage:
+#   docker-compose -f docker-compose.lite.yml up -d
+#   docker-compose -f docker-compose.lite.yml down -v
+# ==============================================================================
+
+version: "3.8"
+
+x-common-env: &common-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: smart_factory
+  POSTGRES_USER: ${POSTGRES_USER:-factory_admin}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+  KAFKA_BROKER: kafka:9092
+  MQTT_BROKER: mqtt
+  MQTT_PORT: "1883"
+
+services:
+  # ── Infrastructure ──
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: sf-dev-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_factory}
+      POSTGRES_USER: ${POSTGRES_USER:-factory_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-factory_admin} -d ${POSTGRES_DB:-smart_factory}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+  mqtt:
+    build:
+      context: ./mqtt
+      dockerfile: Dockerfile
+    container_name: sf-dev-mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mqtt_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-p", "1883", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: sf-dev-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: sf-dev-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+  # ── Data Pipeline (minimal) ──
+
+  mqtt-kafka-bridge:
+    build:
+      context: ./mqtt-kafka-bridge
+      dockerfile: Dockerfile
+    container_name: sf-dev-bridge
+    depends_on:
+      mqtt:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      KAFKA_TOPIC_SENSOR: factory.sensor.raw
+      KAFKA_TOPIC_ALERTS: factory.alerts
+      MQTT_TOPIC_PREFIX: "factory/"
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+  # ── Application ──
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sf-dev-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      SECRET_KEY: dev_secret_key_not_for_production
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory_admin}:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/${POSTGRES_DB:-smart_factory}
+      SNOWFLAKE_ENABLED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - ./backend:/app:ro
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000/api/v1
+        VITE_WS_URL: ws://localhost:8000/api/v1/ws/live
+    container_name: sf-dev-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    networks:
+      - smart-factory-dev
+
+volumes:
+  postgres_data:
+    driver: local
+  mqtt_data:
+    driver: local
+
+networks:
+  smart-factory-dev:
+    name: smart-factory-dev
+    driver: bridge

@@ -1,0 +1,424 @@
+# ==============================================================================
+# Smart Factory IoT Platform — Full Stack Docker Compose
+# ==============================================================================
+# Usage:
+#   docker-compose up -d                 # Start all services
+#   docker-compose up -d --build         # Rebuild and start
+#   docker-compose down -v               # Stop and remove volumes
+#   docker-compose logs -f backend       # Follow logs for a service
+# ==============================================================================
+
+version: "3.8"
+
+x-common-env: &common-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: smart_factory
+  POSTGRES_USER: ${POSTGRES_USER:-factory_admin}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+  KAFKA_BROKER: kafka:9092
+  MQTT_BROKER: mqtt
+  MQTT_PORT: "1883"
+
+services:
+  # ============================================================================
+  # INFRASTRUCTURE
+  # ============================================================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: sf-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: sf-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  mqtt:
+    build:
+      context: ./mqtt
+      dockerfile: Dockerfile
+    container_name: sf-mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mqtt_data:/mosquitto/data
+      - mqtt_log:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-p", "1883", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: sf-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_factory}
+      POSTGRES_USER: ${POSTGRES_USER:-factory_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      POSTGRES_MULTIPLE_DATABASES: smart_factory,airflow_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-factory_admin} -d ${POSTGRES_DB:-smart_factory}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  # ============================================================================
+  # DATA PIPELINE
+  # ============================================================================
+
+  mqtt-kafka-bridge:
+    build:
+      context: ./mqtt-kafka-bridge
+      dockerfile: Dockerfile
+    container_name: sf-mqtt-kafka-bridge
+    depends_on:
+      mqtt:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      KAFKA_TOPIC_SENSOR: factory.sensor.raw
+      KAFKA_TOPIC_ALERTS: factory.alerts
+      MQTT_TOPIC_PREFIX: "factory/"
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  iot-simulator:
+    build:
+      context: ./iot-simulator
+      dockerfile: Dockerfile
+    container_name: sf-iot-simulator
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      MQTT_TOPIC_PREFIX: "factory/"
+      SIMULATOR_INTERVAL: "2"
+      NUM_MACHINES: "10"
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  spark-streaming:
+    build:
+      context: ./spark-streaming
+      dockerfile: Dockerfile
+    container_name: sf-spark-streaming
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SPARK_MASTER: local[*]
+      SPARK_APP_NAME: SmartFactoryStreaming
+      SPARK_CHECKPOINT_DIR: /tmp/spark-checkpoints
+      KAFKA_TOPIC_SENSOR: factory.sensor.raw
+    volumes:
+      - spark_checkpoints:/tmp/spark-checkpoints
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  # ============================================================================
+  # AIRFLOW
+  # ============================================================================
+
+  airflow-init:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: sf-airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-factory_admin}:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/airflow_db
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-zTvhk_0V-MmCdGKeilgPKqJfQ0fF-GfnO3YJOASEvmc=}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-smart_factory_airflow_secret}
+    entrypoint: >
+      bash -c "
+        airflow db init &&
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USER:-admin} \
+          --password ${AIRFLOW_ADMIN_PASSWORD:-admin} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@smartfactory.local &&
+        echo 'Airflow initialization complete.'
+      "
+    networks:
+      - smart-factory-network
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: sf-airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    command: airflow webserver --port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-factory_admin}:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/airflow_db
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-zTvhk_0V-MmCdGKeilgPKqJfQ0fF-GfnO3YJOASEvmc=}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-smart_factory_airflow_secret}
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: sf-airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    command: airflow scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-factory_admin}:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/airflow_db
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-zTvhk_0V-MmCdGKeilgPKqJfQ0fF-GfnO3YJOASEvmc=}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-smart_factory_airflow_secret}
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  # ============================================================================
+  # APPLICATION
+  # ============================================================================
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sf-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      SECRET_KEY: ${SECRET_KEY:-your_jwt_secret_key_change_in_production}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory_admin}:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/${POSTGRES_DB:-smart_factory}
+      SNOWFLAKE_ENABLED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000/api/v1
+        VITE_WS_URL: ws://localhost:8000/api/v1/ws/live
+    container_name: sf-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  # ============================================================================
+  # MONITORING
+  # ============================================================================
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: sf-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  grafana:
+    build:
+      context: ./monitoring/grafana
+      dockerfile: Dockerfile
+    container_name: sf-grafana
+    depends_on:
+      - prometheus
+      - loki
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: sf-loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/config.yml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - smart-factory-network
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_log:
+    driver: local
+  kafka_data:
+    driver: local
+  mqtt_data:
+    driver: local
+  mqtt_log:
+    driver: local
+  spark_checkpoints:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  loki_data:
+    driver: local
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  smart-factory-network:
+    name: smart-factory-network
+    driver: bridge

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+type: Opaque
+data:
+  # Base64 encoded values: factory_admin, change_me_in_production, smart_factory
+  POSTGRES_USER: ZmFjdG9yeV9hZG1pbg==
+  POSTGRES_PASSWORD: Y2hhbmdlX21lX2luX3Byb2R1Y3Rpb24=
+  POSTGRES_DB: c21hcnRfZmFjdG9yeQ==
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  BACKEND_HOST: "0.0.0.0"
+  BACKEND_PORT: "8000"
+  CORS_ORIGINS: "http://localhost,http://localhost:3000,http://frontend-service"
