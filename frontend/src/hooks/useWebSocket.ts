@@ -28,8 +28,8 @@ export function useWebSocket(): UseWebSocketReturn {
 
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const wsHost = import.meta.env.VITE_WS_URL || `${protocol}://${window.location.host}`;
-      const wsUrl = `${wsHost}/ws/sensors?token=${token}`;
+      const wsHost = import.meta.env.VITE_WS_URL || `${protocol}://${window.location.host}/api/v1/ws/live`;
+      const wsUrl = `${wsHost}?token=${token}`;
 
       if (wsRef.current) {
         wsRef.current.close();

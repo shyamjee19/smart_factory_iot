@@ -1,26 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Grid, Card, CardContent, Typography, CircularProgress, IconButton, Button } from '@mui/material';
+import { Box, Grid, Card, CardContent, Typography, CircularProgress, Button } from '@mui/material';
 import { Refresh as RefreshIcon, TrendingUp, Warning, DevicesOther, CheckCircle } from '@mui/icons-material';
 import api from '../api/axios';
+import RealtimeChart from '../components/Dashboard/RealtimeChart';
+import DeviceStatusGrid from '../components/Dashboard/DeviceStatusGrid';
+import TemperatureChart from '../components/Charts/TemperatureChart';
+import VibrationChart from '../components/Charts/VibrationChart';
+import DeviceUtilizationChart from '../components/Charts/DeviceUtilizationChart';
 
 // A simple StatCard component for the dashboard
 const StatCard = ({ title, value, icon, color }: { title: string, value: string | number, icon: React.ReactNode, color: string }) => (
   <Card>
-    <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 3 }}>
       <Box>
-        <Typography color="textSecondary" gutterBottom variant="overline">
+        <Typography color="textSecondary" gutterBottom variant="overline" sx={{ letterSpacing: 1, fontWeight: 600 }}>
           {title}
         </Typography>
-        <Typography variant="h4" color="textPrimary">
+        <Typography variant="h4" color="textPrimary" fontWeight="700">
           {value}
         </Typography>
       </Box>
       <Box sx={{ 
-        backgroundColor: `${color}20`, 
-        p: 1.5, 
+        backgroundColor: `${color}15`, 
+        p: 2, 
         borderRadius: '50%',
         display: 'flex',
-        color: color
+        color: color,
+        boxShadow: `0 0 10px ${color}10`
       }}>
         {icon}
       </Box>
@@ -30,15 +36,19 @@ const StatCard = ({ title, value, icon, color }: { title: string, value: string 
 
 const Dashboard = () => {
   const [summary, setSummary] = useState<any>(null);
+  const [devices, setDevices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchSummary = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/analytics/');
-      setSummary(response.data);
+      const summaryRes = await api.get('/analytics/');
+      setSummary(summaryRes.data);
+      
+      const devicesRes = await api.get('/devices/');
+      setDevices(devicesRes.data.items);
     } catch (error) {
-      console.error("Error fetching summary", error);
+      console.error("Error fetching dashboard data", error);
     } finally {
       setLoading(false);
     }
@@ -46,7 +56,6 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchSummary();
-    // Optional: setup polling here
   }, []);
 
   if (loading && !summary) {
@@ -64,8 +73,9 @@ const Dashboard = () => {
           variant="outlined" 
           onClick={fetchSummary}
           disabled={loading}
+          sx={{ borderRadius: '8px' }}
         >
-          Refresh
+          Refresh Data
         </Button>
       </Box>
 
@@ -106,17 +116,30 @@ const Dashboard = () => {
         </Grid>
       )}
       
-      {/* Placeholders for Charts */}
+      {/* Real-time Ingestion Metrics */}
       <Grid container spacing={3} sx={{ mt: 1 }}>
         <Grid item xs={12} lg={8}>
-          <Card sx={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Typography color="textSecondary">Temperature Trend Chart (Placeholder)</Typography>
-          </Card>
+          <RealtimeChart />
         </Grid>
         <Grid item xs={12} lg={4}>
-          <Card sx={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Typography color="textSecondary">Device Health Distribution (Placeholder)</Typography>
-          </Card>
+          <DeviceStatusGrid devices={devices} />
+        </Grid>
+      </Grid>
+
+      {/* Historical Telemetry Analytics */}
+      <Grid container spacing={3} sx={{ mt: 1 }}>
+        <Grid item xs={12} lg={6}>
+          <TemperatureChart />
+        </Grid>
+        <Grid item xs={12} lg={6}>
+          <VibrationChart />
+        </Grid>
+      </Grid>
+
+      {/* Operational Utilization */}
+      <Grid container spacing={3} sx={{ mt: 1, mb: 3 }}>
+        <Grid item xs={12}>
+          <DeviceUtilizationChart />
         </Grid>
       </Grid>
     </Box>

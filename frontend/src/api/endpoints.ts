@@ -38,8 +38,8 @@ export async function getCurrentUser() {
 
 // ─── Devices ────────────────────────────────────────────
 export async function getDevices(): Promise<Device[]> {
-  const { data } = await client.get<Device[]>('/devices');
-  return data;
+  const { data } = await client.get<any>('/devices');
+  return data.items || [];
 }
 
 export async function getDevice(id: string): Promise<Device> {
@@ -54,8 +54,8 @@ export async function getDeviceLatestData(deviceId: string): Promise<SensorData>
 
 // ─── Alerts ─────────────────────────────────────────────
 export async function getAlerts(params?: AlertParams): Promise<Alert[]> {
-  const { data } = await client.get<Alert[]>('/alerts', { params });
-  return data;
+  const { data } = await client.get<any>('/alerts', { params });
+  return data.items || [];
 }
 
 export async function acknowledgeAlert(id: number): Promise<Alert> {
@@ -71,17 +71,17 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 
 // ─── Analytics ──────────────────────────────────────────
 export async function getTemperatureTrend(range: string = '24h'): Promise<TrendDataPoint[]> {
-  const { data } = await client.get<TrendDataPoint[]>('/analytics/temperature-trend', {
+  const { data } = await client.get<any>('/analytics/temperature-trend', {
     params: { range },
   });
-  return data;
+  return data.data || [];
 }
 
 export async function getVibrationTrend(range: string = '24h'): Promise<TrendDataPoint[]> {
-  const { data } = await client.get<TrendDataPoint[]>('/analytics/vibration-trend', {
+  const { data } = await client.get<any>('/analytics/vibration-trend', {
     params: { range },
   });
-  return data;
+  return data.data || [];
 }
 
 export async function getDeviceHealth(): Promise<DeviceHealth[]> {

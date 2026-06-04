@@ -37,6 +37,87 @@ def transform_data(**context):
     # For now, we just pass it along
     return extract_info
 
+def run_snowflake_transformations(**context):
+    import os
+    import logging
+    from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+    
+    snowflake_enabled = os.getenv("SNOWFLAKE_ENABLED", "false").lower() == "true"
+    
+    if snowflake_enabled:
+        logging.info("Executing Snowflake transformation queries...")
+        hook = SnowflakeHook(snowflake_conn_id='snowflake_default')
+        
+        queries = [
+            # Ensure staging and analytics tables are created if not exists
+            """
+            CREATE TABLE IF NOT EXISTS SMART_FACTORY_DWH.STAGING.SENSOR_DATA_STG (
+                ID BIGINT,
+                DEVICE_ID VARCHAR(50),
+                TIMESTAMP TIMESTAMP,
+                TEMPERATURE DECIMAL(8,3),
+                HUMIDITY DECIMAL(8,3),
+                PRESSURE DECIMAL(8,3),
+                VIBRATION DECIMAL(8,4),
+                VOLTAGE DECIMAL(8,3),
+                CURRENT_AMPS DECIMAL(8,3)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS SMART_FACTORY_DWH.STAGING.DEVICE_MASTER_STG (
+                DEVICE_ID VARCHAR(50),
+                DEVICE_NAME VARCHAR(100),
+                DEVICE_TYPE VARCHAR(50),
+                LOCATION VARCHAR(100),
+                INSTALL_DATE DATE,
+                STATUS VARCHAR(20),
+                UPDATED_AT TIMESTAMP
+            )
+            """,
+            """
+            MERGE INTO SMART_FACTORY_DWH.ANALYTICS.DIM_DEVICE T
+            USING SMART_FACTORY_DWH.STAGING.DEVICE_MASTER_STG S
+            ON T.DEVICE_ID = S.DEVICE_ID AND T.IS_CURRENT = TRUE
+            WHEN MATCHED AND (T.STATUS != S.STATUS OR T.LOCATION != S.LOCATION) THEN
+                UPDATE SET 
+                    T.IS_CURRENT = FALSE, 
+                    T.EXPIRY_DATE = CURRENT_TIMESTAMP(),
+                    T.UPDATED_AT = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN
+                INSERT (DEVICE_ID, DEVICE_NAME, DEVICE_TYPE, LOCATION, INSTALL_DATE, STATUS, EFFECTIVE_DATE)
+                VALUES (S.DEVICE_ID, S.DEVICE_NAME, S.DEVICE_TYPE, S.LOCATION, S.INSTALL_DATE, S.STATUS, CURRENT_TIMESTAMP())
+            """,
+            """
+            INSERT INTO SMART_FACTORY_DWH.ANALYTICS.FACT_SENSOR_DATA (
+                DEVICE_KEY, DATE_KEY, READING_TIMESTAMP, TEMPERATURE, HUMIDITY, 
+                PRESSURE, VIBRATION, VOLTAGE, CURRENT_AMPS, HOUR_OF_DAY, ETL_BATCH_ID
+            )
+            SELECT 
+                D.DEVICE_KEY,
+                CAST(TO_CHAR(S.TIMESTAMP, 'YYYYMMDD') AS INT) AS DATE_KEY,
+                S.TIMESTAMP,
+                S.TEMPERATURE,
+                S.HUMIDITY,
+                S.PRESSURE,
+                S.VIBRATION,
+                S.VOLTAGE,
+                S.CURRENT_AMPS,
+                EXTRACT(HOUR FROM S.TIMESTAMP),
+                'BATCH_' || TO_CHAR(CURRENT_TIMESTAMP(), 'YYYYMMDD_HH24MISS')
+            FROM SMART_FACTORY_DWH.STAGING.SENSOR_DATA_STG S
+            LEFT JOIN SMART_FACTORY_DWH.ANALYTICS.DIM_DEVICE D 
+                ON S.DEVICE_ID = D.DEVICE_ID AND D.IS_CURRENT = TRUE
+            """,
+            "TRUNCATE TABLE SMART_FACTORY_DWH.STAGING.SENSOR_DATA_STG"
+        ]
+        
+        for idx, query in enumerate(queries, 1):
+            logging.info(f"Running Snowflake Query #{idx}...")
+            hook.run(query)
+        logging.info("Snowflake transformations executed successfully.")
+    else:
+        logging.info("[MOCK MODE] Snowflake connection disabled. Simulated dimensions merge.")
+
 with DAG(
     'sensor_data_etl',
     default_args=default_args,
@@ -100,10 +181,10 @@ with DAG(
     # 4. Execute Merge/Insert in Snowflake using SnowflakeOperator
     # Note: Using PostgresOperator as a mock here since we might not have Snowflake credentials setup yet
     # In production, this would be a SnowflakeOperator executing the transform_queries.sql
-    merge_dimensions = PostgresOperator(
+    merge_dimensions = PythonOperator(
         task_id='merge_dimensions',
-        postgres_conn_id='postgres_default',
-        sql="SELECT 1;" # Mock SQL
+        python_callable=run_snowflake_transformations,
+        provide_context=True
     )
     
     # 5. Audit Logging

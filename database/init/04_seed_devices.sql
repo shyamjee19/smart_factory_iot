@@ -17,7 +17,7 @@ INSERT INTO device_health (device_id, uptime_percentage, anomaly_count, health_s
 ON CONFLICT DO NOTHING;
 
 -- Seed Admin User
--- Password is 'admin123' hashed with bcrypt
+-- Password is 'password123' hashed with bcrypt
 INSERT INTO users (username, email, hashed_password, role, is_active) VALUES
-('admin', 'admin@smartfactory.local', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'admin', true)
+('admin', 'admin@smartfactory.local', '$2b$12$A5M5N0Mr4VTd8zHuYRgZqub8V5T6BBK/6FENUyO5OXM9oclf8JqIK', 'admin', true)
 ON CONFLICT (username) DO NOTHING;

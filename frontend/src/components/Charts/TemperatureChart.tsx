@@ -63,18 +63,8 @@ const TemperatureChart: React.FC = () => {
           setDeviceKeys(keys);
         }
       } catch {
-        // Generate demo data
-        const demoKeys = ['CNC-001', 'Robot-002', 'Conv-003'];
-        setDeviceKeys(demoKeys);
-        const points: TrendDataPoint[] = Array.from({ length: 24 }, (_, i) => {
-          const t = new Date(Date.now() - (24 - i) * 3600000);
-          const point: TrendDataPoint = { timestamp: t.toISOString() };
-          demoKeys.forEach((key, idx) => {
-            point[key] = 45 + idx * 8 + Math.sin(i * 0.5 + idx) * 10 + Math.random() * 5;
-          });
-          return point;
-        });
-        setData(points);
+        setData([]);
+        setDeviceKeys([]);
       }
     };
     fetchData();
@@ -88,6 +78,21 @@ const TemperatureChart: React.FC = () => {
       return value;
     }
   };
+
+  if (data.length === 0) {
+    return (
+      <Card>
+        <CardContent sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 410 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#e2e8f0', mb: 1 }}>
+            No Temperature Historical Data
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#64748b', fontSize: '0.8rem' }} align="center">
+            No telemetry records have been logged in PostgreSQL for the selected time range.
+          </Typography>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>

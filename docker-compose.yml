@@ -13,10 +13,10 @@ version: "3.8"
 x-common-env: &common-env
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
-  POSTGRES_DB: smart_factory
-  POSTGRES_USER: ${POSTGRES_USER:-factory_admin}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
-  KAFKA_BROKER: kafka:9092
+  POSTGRES_DB: ${POSTGRES_DB:-iot_db}
+  POSTGRES_USER: ${POSTGRES_USER:-admin}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin123}
+  KAFKA_BROKER: kafka:29092
   MQTT_BROKER: mqtt
   MQTT_PORT: "1883"
 
@@ -31,18 +31,13 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: "ruok"
       ZOOKEEPER_SYNC_LIMIT: 2
     ports:
       - "2181:2181"
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
-    healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
     restart: unless-stopped
     networks:
       - smart-factory-network
@@ -52,7 +47,7 @@ services:
     container_name: sf-kafka
     depends_on:
       zookeeper:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "9092:9092"
       - "29092:29092"

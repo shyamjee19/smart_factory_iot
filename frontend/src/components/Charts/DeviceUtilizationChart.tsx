@@ -53,19 +53,26 @@ const DeviceUtilizationChart: React.FC = () => {
         const result = await getDeviceHealth();
         setData(result);
       } catch {
-        const demoData: DeviceHealth[] = [
-          { device_id: 'cnc-001', device_name: 'CNC Machine 1', health_score: 95, status: 'online', uptime_percentage: 98.5 },
-          { device_id: 'robot-002', device_name: 'Robotic Arm 2', health_score: 88, status: 'online', uptime_percentage: 92.3 },
-          { device_id: 'conv-003', device_name: 'Conveyor Belt 3', health_score: 76, status: 'warning', uptime_percentage: 85.1 },
-          { device_id: 'press-004', device_name: 'Hydraulic Press', health_score: 92, status: 'online', uptime_percentage: 96.7 },
-          { device_id: 'weld-005', device_name: 'Welding Station', health_score: 64, status: 'warning', uptime_percentage: 72.8 },
-          { device_id: 'assy-006', device_name: 'Assembly Line', health_score: 45, status: 'critical', uptime_percentage: 58.2 },
-        ];
-        setData(demoData);
+        setData([]);
       }
     };
     fetchData();
   }, []);
+
+  if (data.length === 0) {
+    return (
+      <Card>
+        <CardContent sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 356 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#e2e8f0', mb: 1 }}>
+            No Device Utilization Data
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#64748b', fontSize: '0.8rem' }} align="center">
+            No health records have been logged in PostgreSQL for the active devices.
+          </Typography>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>

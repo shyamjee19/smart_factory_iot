@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, CardContent, Box, Typography } from '@mui/material';
+import { Card, CardContent, Box, Typography, CircularProgress } from '@mui/material';
 import {
   AreaChart,
   Area,
@@ -90,44 +90,25 @@ const RealtimeChart: React.FC = () => {
     });
   }, [liveData, devices]);
 
-  // Generate demo data if no live data
-  useEffect(() => {
-    if (Object.keys(liveData).length > 0) return;
-
-    const demoDevices = ['CNC-001', 'Robot-002', 'Conv-003', 'Press-004'];
-    demoDevices.forEach((d) => deviceKeys.current.add(d));
-
-    const initialData: DataPoint[] = Array.from({ length: 20 }, (_, i) => {
-      const t = new Date(Date.now() - (20 - i) * 5000);
-      const point: DataPoint = {
-        time: format(t, 'HH:mm:ss'),
-        timestamp: t.getTime(),
-      };
-      demoDevices.forEach((device, idx) => {
-        point[device] = 40 + idx * 5 + Math.sin(i * 0.3 + idx) * 8 + Math.random() * 3;
-      });
-      return point;
-    });
-    setChartData(initialData);
-
-    const interval = setInterval(() => {
-      const now = new Date();
-      const point: DataPoint = {
-        time: format(now, 'HH:mm:ss'),
-        timestamp: now.getTime(),
-      };
-      demoDevices.forEach((device, idx) => {
-        const prev = chartData.length > 0 ? (chartData[chartData.length - 1][device] as number) || 50 : 50;
-        point[device] = prev + (Math.random() - 0.5) * 4;
-      });
-      setChartData((prev) => [...prev.slice(-MAX_DATA_POINTS + 1), point]);
-    }, 3000);
-
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const keys = Array.from(deviceKeys.current);
+
+  if (chartData.length === 0) {
+    return (
+      <Card>
+        <CardContent sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 380 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
+            <CircularProgress size={20} sx={{ color: '#10b981' }} />
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#e2e8f0' }}>
+              Awaiting Live Telemetry...
+            </Typography>
+          </Box>
+          <Typography variant="body2" sx={{ color: '#64748b', fontSize: '0.8rem' }} align="center">
+            Waiting for simulator events to propagate through MQTT, Kafka, and Spark.
+          </Typography>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
